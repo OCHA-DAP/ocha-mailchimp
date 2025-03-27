@@ -64,7 +64,7 @@ def add_subscriber_to_group(email:str, new_group_id: str, list_id: str):
         new_group_id: group identifier
         list_id: list identifier
     """
-    hashed_email = hashlib.md5(email.lower().encode()).hexdigest()
+    hashed_email = get_subscriber_hash(email=email)
     url = f"https://{server_prefix}.api.mailchimp.com/3.0/lists/{list_id}/members/{hashed_email}"
 
     payload = {
@@ -116,3 +116,57 @@ def get_interests(list_id: str, category_id: str) -> list:
     else:
         logger.error(f"Error: {response.status_code} - {response.json()}")
         return []
+
+
+def get_subscriber_hash(email):
+    hashed_email = hashlib.md5(email.lower().encode()).hexdigest()
+    return hashed_email
+
+
+# Function to retrieve subscribers with a specific interest
+def get_subscribers_with_interest(list_id, interest_id):
+    url = f"{BASE_URL}/lists/{list_id}/members"
+    params = {
+        "fields": "members.email_address",  # Retrieve only the email addresses
+        "interest_id": interest_id,  # Filter by interest ID
+        "status": "subscribed",  # Only fetch active subscribers
+        "count": 1000  # Adjust as needed
+    }
+
+
+    response = requests.get(url, headers=HEADERS  , params=params)
+    if response.status_code == 200:
+        return [member["email_address"] for member in response.json()["members"]]
+    else:
+        print(f"Failed to fetch subscribers. Error: {response.status_code} - {response.json()}")
+        return []
+
+# Function to add a tag to a subscriber
+def add_tag_to_subscriber(email, tag_name, list_id):
+    subscriber_hash = get_subscriber_hash(email)
+    url = f"{BASE_URL}/lists/{list_id}/members/{subscriber_hash}/tags"
+
+    payload = {
+        "tags": [
+            {"name": tag_name, "status": "active"}  # Use "inactive" to remove the tag
+        ]
+    }
+
+
+    response = requests.post(url, json=payload, headers=HEADERS)
+    if response.status_code == 204:
+        print(f"Tag '{tag_name}' successfully added to {email}.")
+    else:
+        print(f"Failed to add tag to {email}. Error: {response.status_code} - {response.json()}")
+
+# Main logic
+def add_tag_to_interest_subscribers(list_id, interest_id, tag_name):
+    # Step 1: Fetch all subscribers with the specific interest
+    subscribers = get_subscribers_with_interest(list_id=list_id, interest_id=interest_id, tag_name=tag_name)
+    if not subscribers:
+        print("No subscribers found for the specified interest.")
+        return
+
+    # Step 2: Add the tag to each subscriber
+    for email in subscribers:
+        add_tag_to_subscriber(email, tag_name=tag_name)
