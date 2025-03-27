@@ -2,7 +2,8 @@ import os
 from loguru import logger
 import requests
 import hashlib
-
+from dotenv import load_dotenv
+load_dotenv('.env')
 # Mailchimp API configuration
 api_key = os.getenv('MAILCHIMP_API_KEY')
 server_prefix = os.getenv('SERVER_PREFIX')  # Replace with your server prefix (e.g., us1, us2)
@@ -54,6 +55,10 @@ def get_subscribers(list_id: str) -> list:
             break
 
     return all_subscribers
+
+def get_subscriber_emails(list_id: str):
+    subs = get_subscribers(list_id=list_id)
+    return [entry['email_address'] for entry in subs if 'email_address' in entry]
 
 
 def add_subscriber_to_group(email:str, new_group_id: str, list_id: str):
@@ -127,16 +132,21 @@ def get_subscriber_hash(email):
 def get_subscribers_with_interest(list_id, interest_id):
     url = f"{BASE_URL}/lists/{list_id}/members"
     params = {
-        "fields": "members.email_address",  # Retrieve only the email addresses
-        "interest_id": interest_id,  # Filter by interest ID
+        "fields": "members.email_address,members.interests",  # Retrieve email addresses and interests
         "status": "subscribed",  # Only fetch active subscribers
         "count": 1000  # Adjust as needed
     }
 
-
-    response = requests.get(url, headers=HEADERS  , params=params)
+    response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code == 200:
-        return [member["email_address"] for member in response.json()["members"]]
+        members = response.json()["members"]
+        # Filter members whose interest_id is True
+        filtered_members = [
+            member["email_address"]
+            for member in members
+            if member.get("interests", {}).get(interest_id, False)
+        ]
+        return filtered_members
     else:
         print(f"Failed to fetch subscribers. Error: {response.status_code} - {response.json()}")
         return []
@@ -162,11 +172,36 @@ def add_tag_to_subscriber(email, tag_name, list_id):
 # Main logic
 def add_tag_to_interest_subscribers(list_id, interest_id, tag_name):
     # Step 1: Fetch all subscribers with the specific interest
-    subscribers = get_subscribers_with_interest(list_id=list_id, interest_id=interest_id, tag_name=tag_name)
+    subscribers = get_subscribers_with_interest(list_id=list_id, interest_id=interest_id)
     if not subscribers:
         print("No subscribers found for the specified interest.")
         return
 
     # Step 2: Add the tag to each subscriber
     for email in subscribers:
-        add_tag_to_subscriber(email, tag_name=tag_name)
+        add_tag_to_subscriber(email=email, tag_name=tag_name, list_id=list_id)
+
+
+# Function to remove a tag from a subscriber
+def remove_tag_from_subscriber(email, tag_name, list_id):
+    subscriber_hash = get_subscriber_hash(email)
+    url = f"{BASE_URL}/lists/{list_id}/members/{subscriber_hash}/tags"
+
+    payload = {
+        "tags": [
+            {"name": tag_name, "status": "inactive"}  # Use "inactive" to remove the tag
+        ]
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, json=payload, headers=headers)
+
+    if response.status_code == 204:
+        print(f"Tag '{tag_name}' successfully removed from {email}.")
+    else:
+        print(f"Failed to remove tag from {email}. Error: {response.status_code} - {response.json()}")
+
+
